@@ -4,16 +4,17 @@ const LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAJ8AAABkCAYAAACYTuI6AABj7ElEQVR42u39d7
 const WEBHOOK = "https://script.google.com/macros/s/AKfycbyCaiELtNYDpjHDQz5nfPxmND8ohvjOejPhrHaQul1acFmCtBgMljJ7JDG-GHMZ23YW/exec";
 
 const PRODUTOS = [
-  { nome: "Molho 270ml",  preco: 20  },
-  { nome: "Molho Verde",  preco: 20  },
-  { nome: "Conserva",     preco: 25  },
-  { nome: "Batata 500g",  preco: 25  },
-  { nome: "Batata 1,8kg", preco: 50  },
-  { nome: "Ovo 500g",     preco: 35  },
-  { nome: "Ovo 1,8kg",    preco: 120 },
-  { nome: "Cebolete",     preco: 25  },
-  { nome: "Geleia",       preco: 25  },
-  { nome: "Extra Forte",  preco: 30  },
+  { nome: "Molho 270ml",  preco: 20,  livre: false },
+  { nome: "Molho Verde",  preco: 20,  livre: false },
+  { nome: "Conserva",     preco: 25,  livre: false },
+  { nome: "Batata 500g",  preco: 25,  livre: false },
+  { nome: "Batata 1,8kg", preco: 50,  livre: false },
+  { nome: "Ovo 500g",     preco: 35,  livre: false },
+  { nome: "Ovo 1,8kg",    preco: 120, livre: false },
+  { nome: "Cebolete",     preco: 25,  livre: false },
+  { nome: "Geleia",       preco: 25,  livre: false },
+  { nome: "Extra Forte",  preco: 30,  livre: false },
+  { nome: "Diversos",     preco: 0,   livre: true  },
 ];
 
 const PGTO = ["Pix", "Dinheiro", "Cartão", "A combinar"];
@@ -29,26 +30,14 @@ function hoje() { return new Date().toISOString().split("T")[0]; }
 function fmtData(d) { if (!d) return "—"; const [y,m,dia] = d.split("-"); return dia+"/"+m+"/"+y; }
 function diasR(d) { if (!d) return null; return Math.ceil((new Date(d+"T12:00:00")-new Date())/86400000); }
 
-async function enviarCRM(pedido) {
+async function chamarCRM(params) {
   try {
-    const params = new URLSearchParams({
-      id:        pedido.id.toString(),
-      criadoEm:  pedido.criadoEm,
-      cliente:   pedido.cliente,
-      contato:   pedido.contato,
-      itens:     pedido.itens,
-      valor:     pedido.valor.toString(),
-      pgto:      pedido.pgto,
-      data:      pedido.data,
-      status:    pedido.status,
-      obs:       pedido.obs,
-    });
-    const url = WEBHOOK + "?" + params.toString();
+    const url = WEBHOOK + "?" + new URLSearchParams(params).toString();
     const res = await fetch(url);
     const json = await res.json();
     return json.ok === true;
   } catch(e) {
-    console.warn("Erro CRM:", e);
+    console.warn("CRM:", e);
     return false;
   }
 }
@@ -62,11 +51,13 @@ export default function App() {
   const [cliente, setCliente]   = useState("");
   const [contato, setContato]   = useState("");
   const [itens, setItens]       = useState({});
+  const [precosLivres, setPrecosLivres] = useState({});
+  const [descLivres, setDescLivres]     = useState({});
   const [pgto, setPgto]         = useState("");
   const [data, setData]         = useState("");
   const [obs, setObs]           = useState("");
   const [erro, setErro]         = useState("");
-  const [status, setStatus]     = useState("idle"); // idle | salvando | ok | erro_crm
+  const [statusBtn, setStatusBtn] = useState("idle");
   const [fSt, setFSt]           = useState("todos");
   const [fOrd, setFOrd]         = useState("data");
   const [expTxt, setExpTxt]     = useState("");
@@ -74,15 +65,25 @@ export default function App() {
   const [copiado, setCopiado]   = useState(false);
 
   useEffect(() => {
-    try { const s = localStorage.getItem("ps_v2"); if (s) setPedidos(JSON.parse(s)); } catch(e) {}
+    try { const s = localStorage.getItem("ps_v3"); if (s) setPedidos(JSON.parse(s)); } catch(e) {}
   }, []);
 
   useEffect(() => {
-    try { localStorage.setItem("ps_v2", JSON.stringify(pedidos)); } catch(e) {}
+    try { localStorage.setItem("ps_v3", JSON.stringify(pedidos)); } catch(e) {}
   }, [pedidos]);
 
-  const total = PRODUTOS.reduce((acc, p) => acc + (itens[p.nome]||0)*p.preco, 0);
-  const sel   = PRODUTOS.filter(p => itens[p.nome]);
+  // Calcula total considerando preços livres
+  const total = PRODUTOS.reduce((acc, p) => {
+    const qty = itens[p.nome] || 0;
+    if (!qty) return acc;
+    if (p.livre) {
+      const preco = parseFloat(precosLivres[p.nome] || 0);
+      return acc + preco * qty;
+    }
+    return acc + p.preco * qty;
+  }, 0);
+
+  const sel = PRODUTOS.filter(p => itens[p.nome]);
 
   function toggleProd(nome) {
     setItens(prev => {
@@ -101,25 +102,50 @@ export default function App() {
   async function salvar() {
     if (!cliente.trim()) { setErro("Informe o nome do cliente."); return; }
     if (!sel.length)      { setErro("Selecione ao menos 1 produto."); return; }
-    setErro(""); setStatus("salvando");
+    // Valida preço livre
+    for (const p of sel) {
+      if (p.livre && !(parseFloat(precosLivres[p.nome]) > 0)) {
+        setErro("Informe o valor para Diversos."); return;
+      }
+    }
+    setErro(""); setStatusBtn("salvando");
+
+    // Monta descrição dos itens
+    const desc = sel.map(p => {
+      if (p.livre) {
+        const desc2 = descLivres[p.nome] ? descLivres[p.nome] : "Diversos";
+        return itens[p.nome]+"x "+desc2+" (R$"+precosLivres[p.nome]+")";
+      }
+      return itens[p.nome]+"x "+p.nome;
+    }).join(", ");
 
     const novo = {
       id: Date.now(),
       cliente: cliente.trim(), contato: contato.trim(),
-      itens: sel.map(p => itens[p.nome]+"x "+p.nome).join(", "),
-      valor: total, pgto, data, obs: obs.trim(),
-      status: "pendente", criadoEm: hoje()
+      itens: desc, valor: total, pgto, data,
+      obs: obs.trim(), status: "pendente", criadoEm: hoje()
     };
 
     setPedidos(ps => [novo, ...ps]);
-    const ok = await enviarCRM(novo);
-    setStatus(ok ? "ok" : "erro_crm");
-    setTimeout(() => setStatus("idle"), 3000);
-    setCliente(""); setContato(""); setItens({}); setPgto(""); setData(""); setObs("");
+    const ok = await chamarCRM({ acao:"novo", ...novo, id: novo.id.toString(), valor: novo.valor.toString() });
+    setStatusBtn(ok ? "ok" : "erro_crm");
+    setTimeout(() => setStatusBtn("idle"), 3000);
+    setCliente(""); setContato(""); setItens({}); setPrecosLivres({}); setDescLivres({}); setPgto(""); setData(""); setObs("");
   }
 
-  function marcarEntregue(id) { setPedidos(ps=>ps.map(p=>p.id===id?{...p,status:p.status==="entregue"?"pendente":"entregue"}:p)); }
-  function excluir(id) { if(!confirm("Excluir?")) return; setPedidos(ps=>ps.filter(p=>p.id!==id)); }
+  async function marcarEntregue(id) {
+    const p = pedidos.find(x => x.id === id);
+    if (!p) return;
+    const novoStatus = p.status === "entregue" ? "pendente" : "entregue";
+    setPedidos(ps => ps.map(x => x.id===id ? {...x, status:novoStatus} : x));
+    await chamarCRM({ acao:"status", id: id.toString(), status: novoStatus });
+  }
+
+  async function excluir(id) {
+    if (!confirm("Excluir este pedido?")) return;
+    setPedidos(ps => ps.filter(p => p.id !== id));
+    await chamarCRM({ acao:"excluir", id: id.toString() });
+  }
 
   let lista = pedidos.filter(p=>fSt==="todos"||p.status===fSt);
   if (fOrd==="data")    lista=[...lista].sort((a,b)=>(a.data||"9999")>(b.data||"9999")?1:-1);
@@ -146,8 +172,8 @@ export default function App() {
     setExpTxt(t); setExpOpen(true);
   }
 
-  const btnCor = status==="ok"?"#1a6e1a":status==="erro_crm"?"#7a4800":status==="salvando"?"#333":C.rd;
-  const btnTxt = status==="salvando"?"Salvando...":status==="ok"?"✓ Salvo no app e no CRM!":status==="erro_crm"?"✓ Salvo no app (CRM offline)":"Salvar pedido";
+  const btnCor = statusBtn==="ok"?"#1a6e1a":statusBtn==="erro_crm"?"#7a4800":statusBtn==="salvando"?"#333":C.rd;
+  const btnTxt = statusBtn==="salvando"?"Salvando...":statusBtn==="ok"?"✓ Salvo no app e no CRM!":statusBtn==="erro_crm"?"✓ Salvo (CRM offline)":"Salvar pedido";
 
   return (
     <div style={{minHeight:"100vh",background:C.bg,color:C.tx,fontFamily:"'DM Sans',sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:80}}>
@@ -183,28 +209,39 @@ export default function App() {
           <div style={DIV}>Produtos</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:7,marginBottom:12}}>
             {PRODUTOS.map(p=>(
-              <span key={p.nome} onClick={()=>toggleProd(p.nome)} style={{padding:"6px 11px",borderRadius:20,fontSize:12,cursor:"pointer",border:itens[p.nome]?"1px solid "+C.rd:"1px solid #2a2a2a",background:itens[p.nome]?C.rd:"#141414",color:itens[p.nome]?"#fff":"#888",userSelect:"none"}}>
-                {p.nome}
+              <span key={p.nome} onClick={()=>toggleProd(p.nome)} style={{padding:"6px 11px",borderRadius:20,fontSize:12,cursor:"pointer",border:itens[p.nome]?"1px solid "+C.rd:"1px solid #2a2a2a",background:itens[p.nome]?p.livre?"#7a3800":C.rd:"#141414",color:itens[p.nome]?"#fff":"#888",userSelect:"none"}}>
+                {p.nome}{p.livre?" 🏷️":""}
               </span>
             ))}
           </div>
 
           {sel.length>0 && (
             <>
-              {sel.map(p=>(
-                <div key={p.nome} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.bg2,border:"1px solid "+C.br,borderRadius:10,padding:"8px 12px",marginBottom:8}}>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:14,color:C.tx}}>{p.nome}</div>
-                    <div style={{fontSize:11,color:C.mu}}>{fmtV(p.preco)} cada</div>
+              {sel.map(p=>{
+                const precoUnit = p.livre ? (parseFloat(precosLivres[p.nome])||0) : p.preco;
+                return (
+                  <div key={p.nome} style={{background:C.bg2,border:"1px solid "+(p.livre?"#7a3800":C.br),borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:p.livre?8:0}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:14,color:C.tx}}>{p.nome}{p.livre?" 🏷️":""}</div>
+                        {!p.livre && <div style={{fontSize:11,color:C.mu}}>{fmtV(p.preco)} cada</div>}
+                      </div>
+                      <div style={{fontSize:14,fontWeight:700,color:C.tx,marginRight:12}}>{fmtV(precoUnit*itens[p.nome])}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <button onClick={()=>ajustarQty(p.nome,-1)} style={{width:30,height:30,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:20,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                        <span style={{fontSize:16,fontWeight:700,color:C.tx,minWidth:24,textAlign:"center"}}>{itens[p.nome]}</span>
+                        <button onClick={()=>ajustarQty(p.nome,+1)} style={{width:30,height:30,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:20,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                      </div>
+                    </div>
+                    {p.livre && (
+                      <div style={{display:"flex",gap:8,marginTop:4}}>
+                        <input style={{...inp,flex:2,fontSize:13,padding:"7px 10px"}} placeholder="Descreva (ex: Kit churrasco)" value={descLivres[p.nome]||""} onChange={e=>setDescLivres(prev=>({...prev,[p.nome]:e.target.value}))}/>
+                        <input style={{...inp,flex:1,fontSize:13,padding:"7px 10px"}} type="number" placeholder="Valor R$" inputMode="decimal" value={precosLivres[p.nome]||""} onChange={e=>setPrecosLivres(prev=>({...prev,[p.nome]:e.target.value}))}/>
+                      </div>
+                    )}
                   </div>
-                  <div style={{fontSize:14,fontWeight:700,color:C.tx,marginRight:12}}>{fmtV((itens[p.nome]||0)*p.preco)}</div>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <button onClick={()=>ajustarQty(p.nome,-1)} style={{width:30,height:30,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:20,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-                    <span style={{fontSize:16,fontWeight:700,color:C.tx,minWidth:24,textAlign:"center"}}>{itens[p.nome]}</span>
-                    <button onClick={()=>ajustarQty(p.nome,+1)} style={{width:30,height:30,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:20,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               <div style={{background:C.bg2,border:"1px solid "+C.br,borderRadius:12,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span style={{fontSize:14,color:C.mu}}>Total do pedido</span>
                 <span style={{fontSize:24,fontWeight:700,color:C.rd}}>{fmtV(total)}</span>
@@ -230,11 +267,11 @@ export default function App() {
           </div>
 
           {erro && <div style={{color:C.rd,fontSize:13,marginTop:4,textAlign:"center"}}>{erro}</div>}
-          <button onClick={salvar} disabled={status==="salvando"} style={{width:"100%",padding:13,background:btnCor,color:"#fff",border:"none",borderRadius:12,fontSize:15,fontWeight:700,cursor:status==="salvando"?"not-allowed":"pointer",marginTop:6,transition:"background .3s"}}>
+          <button onClick={salvar} disabled={statusBtn==="salvando"} style={{width:"100%",padding:13,background:btnCor,color:"#fff",border:"none",borderRadius:12,fontSize:15,fontWeight:700,cursor:statusBtn==="salvando"?"not-allowed":"pointer",marginTop:6,transition:"background .3s"}}>
             {btnTxt}
           </button>
-          {status==="ok" && <div style={{textAlign:"center",fontSize:12,color:C.gn,marginTop:6}}>📊 Registrado na planilha Google</div>}
-          {status==="erro_crm" && <div style={{textAlign:"center",fontSize:12,color:C.am,marginTop:6}}>⚠️ Pedido salvo no app. Planilha não respondeu.</div>}
+          {statusBtn==="ok" && <div style={{textAlign:"center",fontSize:12,color:C.gn,marginTop:6}}>📊 Registrado na planilha Google</div>}
+          {statusBtn==="erro_crm" && <div style={{textAlign:"center",fontSize:12,color:C.am,marginTop:6}}>⚠️ Salvo no app. Planilha não respondeu.</div>}
         </div>
       )}
 

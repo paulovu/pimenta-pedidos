@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Recuperar Pedidos</title>
+  <style>
+    body { background:#0a0a0a; color:#f0f0f0; font-family:sans-serif; padding:20px; }
+    h2 { color:#e63131; margin-bottom:16px; }
+    .card { background:#111; border:1px solid #222; border-radius:12px; padding:14px; margin-bottom:12px; }
+    .chave { font-size:11px; color:#555; margin-bottom:6px; }
+    .qtd { font-size:20px; font-weight:700; color:#f0f0f0; }
+    .sub { font-size:12px; color:#777; margin-top:2px; }
+    textarea { width:100%; height:200px; background:#141414; border:1px solid #222; border-radius:10px; color:#aaa; font-size:11px; padding:10px; margin-top:8px; font-family:monospace; }
+    button { width:100%; padding:13px; background:#e63131; color:#fff; border:none; border-radius:12px; font-size:15px; font-weight:700; cursor:pointer; margin-top:8px; }
+    button.sec { background:#1a1a1a; color:#aaa; border:1px solid #222; }
+    .ok { color:#5cb85c; font-size:13px; margin-top:6px; text-align:center; }
+    .nada { color:#555; font-size:14px; padding:20px; text-align:center; }
+  </style>
+</head>
+<body>
+  <h2>🌶️ Recuperar Pedidos</h2>
+  <div id="resultado"></div>
+  <script>
+    const CHAVES = [
+      "ps_v3","ps_v2","ps_pedidos_v1","ps_pedidos2",
+      "ps_pedidos","ps3","ps2","ps1"
+    ];
+
+    let melhorChave = null;
+    let melhorDados = [];
+    const el = document.getElementById("resultado");
+
+    CHAVES.forEach(chave => {
+      try {
+        const raw = localStorage.getItem(chave);
+        if (!raw) return;
+        const dados = JSON.parse(raw);
+        if (!Array.isArray(dados) || !dados.length) return;
+
+        const total = dados.reduce((s,p) => s + (p.valor||0), 0);
+        const pend  = dados.filter(p => p.status === "pendente").length;
+
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `
+          <div class="chave">Chave: ${chave}</div>
+          <div class="qtd">${dados.length} pedidos encontrados</div>
+          <div class="sub">${pend} pendentes · R$ ${total.toFixed(2).replace(".",",")}</div>
+          <button onclick="restaurar('${chave}')">✓ Usar estes dados</button>
+        `;
+        el.appendChild(card);
+
+        if (dados.length > melhorDados.length) {
+          melhorDados = dados;
+          melhorChave = chave;
+        }
+      } catch(e) {}
+    });
+
+    if (!melhorChave) {
+      el.innerHTML = '<div class="nada">Nenhum dado encontrado no celular.<br><br>Os pedidos podem ter sido perdidos ao limpar o cache.<br><br>Use o botão abaixo para inserir manualmente o texto do resumo.</div>';
+      mostrarManual();
+    } else {
+      // Sugere automaticamente a melhor
+      const auto = document.createElement("div");
+      auto.innerHTML = `<div class="ok">✓ Melhor opção detectada: <b>${melhorChave}</b> (${melhorDados.length} pedidos)</div>`;
+      el.appendChild(auto);
+    }
+
+    function restaurar(chave) {
+      try {
+        const dados = JSON.parse(localStorage.getItem(chave));
+        // Salva na chave atual do app
+        localStorage.setItem("ps_v3", JSON.stringify(dados));
+        alert("✓ Dados restaurados! Abra o app agora — seus pedidos estão de volta.");
+      } catch(e) {
+        alert("Erro: " + e.message);
+      }
+    }
+
+    function mostrarManual() {
+      const div = document.createElement("div");
+      div.className = "card";
+      div.innerHTML = `
+        <div class="chave">Inserir dados manualmente</div>
+        <div style="font-size:13px;color:#777;margin-bottom:8px">Cole abaixo o JSON dos pedidos (se tiver backup)</div>
+        <textarea id="json-input" placeholder='[{"id":123,"cliente":"João",...}]'></textarea>
+        <button onclick="importarJSON()">Importar JSON</button>
+      `;
+      document.body.appendChild(div);
+    }
+
+    function importarJSON() {
+      try {
+        const raw = document.getElementById("json-input").value.trim();
+        const dados = JSON.parse(raw);
+        if (!Array.isArray(dados)) throw new Error("Deve ser uma lista de pedidos");
+        localStorage.setItem("ps_v3", JSON.stringify(dados));
+        alert("✓ " + dados.length + " pedidos importados! Abra o app agora.");
+      } catch(e) {
+        alert("Erro no JSON: " + e.message);
+      }
+    }
+  </script>
+</body>
+</html>

@@ -17,79 +17,128 @@ const PRODUTOS = [
   { nome: "Diversos",     preco: 0,   livre: true  },
 ];
 const PGTO = ["Pix","Dinheiro","Cartao","A combinar"];
-const C = {bg:"#0a0a0a",bg2:"#111111",bg3:"#1a1a1a",br:"#1e1e1e",tx:"#f0f0f0",mu:"#777777",di:"#555555",rd:"#e63131",gn:"#5cb85c",gnB:"#0f2a0a",rdB:"#2a0a0a",am:"#f5a623",amB:"#2a1f00"};
+const C = {
+  bg:"#0a0a0a",bg2:"#111111",bg3:"#1a1a1a",br:"#1e1e1e",
+  tx:"#f0f0f0",mu:"#777777",di:"#555555",rd:"#e63131",
+  gn:"#5cb85c",gnB:"#0f2a0a",rdB:"#2a0a0a",am:"#f5a623",amB:"#2a1f00"
+};
 const EST0 = Object.fromEntries(PRODUTOS.filter(p=>!p.livre).map(p=>[p.nome,0]));
 
 function fmtV(v){return "R$ "+Number(v).toFixed(2).replace(".",",");}
 function hoje(){return new Date().toISOString().split("T")[0];}
 function fmtData(d){if(!d)return "";const[y,m,dia]=d.split("-");return dia+"/"+m+"/"+y;}
 function diasR(d){if(!d)return null;return Math.ceil((new Date(d+"T12:00:00")-new Date())/86400000);}
-async function crm(params){try{const r=await fetch(WEBHOOK_URL+"?"+new URLSearchParams(params).toString());const j=await r.json();return j.ok===true;}catch(e){return false;}}
+async function crm(params){
+  try{const r=await fetch(WEBHOOK_URL+"?"+new URLSearchParams(params).toString());const j=await r.json();return j.ok===true;}
+  catch(e){return false;}
+}
 
 const inp={width:"100%",fontSize:15,padding:"10px 12px",background:"#141414",border:"1px solid #222",borderRadius:10,color:"#f0f0f0",outline:"none",boxSizing:"border-box"};
 const DIV={fontSize:10,color:"#444",textTransform:"uppercase",letterSpacing:"1px",margin:"16px 0 10px",paddingBottom:6,borderBottom:"1px solid #1a1a1a"};
 
 export default function App(){
-  const [tab,setTab]=useState("novo");
-  const [pedidos,setPed]=useState([]);
-  const [est,setEst]=useState(EST0);
-  const [cli,setCli]=useState("");const [con,setCon]=useState("");
-  const [itens,setItens]=useState({});const [precoL,setPrecoL]=useState({});const [descL,setDescL]=useState({});
-  const [pgto,setPgto]=useState("");const [data,setData]=useState("");const [obs,setObs]=useState("");
-  const [erro,setErro]=useState("");const [stBtn,setStBtn]=useState("idle");
-  const [fSt,setFSt]=useState("todos");const [fOrd,setFOrd]=useState("data");
-  const [expTxt,setExpTxt]=useState("");const [expOpen,setExpOpen]=useState(false);const [cop,setCop]=useState(false);
+  const [tab,setTab]         = useState("novo");
+  const [pedidos,setPed]     = useState([]);
+  const [est,setEst]         = useState(EST0);
+  const [cli,setCli]         = useState("");
+  const [con,setCon]         = useState("");
+  const [itens,setItens]     = useState({});
+  const [precoL,setPrecoL]   = useState({});
+  const [descL,setDescL]     = useState({});
+  const [pgto,setPgto]       = useState("");
+  const [data,setData]       = useState("");
+  const [obs,setObs]         = useState("");
+  const [erro,setErro]       = useState("");
+  const [stBtn,setStBtn]     = useState("idle");
+  const [fSt,setFSt]         = useState("todos");
+  const [fOrd,setFOrd]       = useState("data");
+  const [expTxt,setExpTxt]   = useState("");
+  const [expOpen,setExpOpen] = useState(false);
+  const [cop,setCop]         = useState(false);
 
   useEffect(()=>{
-    try{const s=localStorage.getItem("ps_v3");if(s)setPed(JSON.parse(s));const e=localStorage.getItem("ps_est");if(e)setEst(JSON.parse(e));}catch(e){}
+    try{
+      const s=localStorage.getItem("ps_v3"); if(s) setPed(JSON.parse(s));
+      const e=localStorage.getItem("ps_est"); if(e) setEst(JSON.parse(e));
+    }catch(e){}
   },[]);
   useEffect(()=>{try{localStorage.setItem("ps_v3",JSON.stringify(pedidos));}catch(e){}},[pedidos]);
   useEffect(()=>{try{localStorage.setItem("ps_est",JSON.stringify(est));}catch(e){}},[est]);
 
-  const comp={};
+  // Calcula comprometido nos pedidos pendentes
+  const comp = {};
   PRODUTOS.filter(p=>!p.livre).forEach(p=>{comp[p.nome]=0;});
   pedidos.filter(p=>p.status==="pendente").forEach(ped=>{
     ped.itens.split(", ").forEach(item=>{
       const m=item.match(/^(\d+)x (.+)$/);
-      if(m&&comp[m[2]]!==undefined)comp[m[2]]+=parseInt(m[1]);
+      if(m && comp[m[2]]!==undefined) comp[m[2]]+=parseInt(m[1]);
     });
   });
 
-  const total=PRODUTOS.reduce((acc,p)=>{const q=itens[p.nome]||0;if(!q)return acc;return acc+(p.livre?parseFloat(precoL[p.nome]||0):p.preco)*q;},0);
-  const sel=PRODUTOS.filter(p=>itens[p.nome]);
+  // Saldo real: positivo = sobra, negativo = precisa produzir
+  function saldo(nome){ return (est[nome]||0) - (comp[nome]||0); }
 
-  function togProd(nome){setItens(prev=>{if(prev[nome]){const n={...prev};delete n[nome];return n;}return{...prev,[nome]:1};});}
-  function adjQty(nome,d){setItens(prev=>{const v=(prev[nome]||0)+d;if(v<=0){const n={...prev};delete n[nome];return n;}return{...prev,[nome]:v};});}
+  // Cor do chip baseada no saldo — mas nunca bloqueia
+  function corChip(nome){
+    const s = saldo(nome);
+    if(s > 3)  return { bg:"#141414", txt:"#888", border:"#2a2a2a" };
+    if(s > 0)  return { bg:"#2a1f00", txt:C.am,   border:"#4a3800" };
+    return             { bg:"#1a0a0a", txt:"#c06060", border:"#3a1a1a" };
+  }
+
+  const total = PRODUTOS.reduce((acc,p)=>{
+    const q=itens[p.nome]||0; if(!q) return acc;
+    return acc+(p.livre?parseFloat(precoL[p.nome]||0):p.preco)*q;
+  },0);
+  const sel = PRODUTOS.filter(p=>itens[p.nome]);
+
+  function togProd(nome){
+    setItens(prev=>{
+      if(prev[nome]){const n={...prev};delete n[nome];return n;}
+      return{...prev,[nome]:1};
+    });
+  }
+  function adjQty(nome,d){
+    setItens(prev=>{
+      const v=(prev[nome]||0)+d;
+      if(v<=0){const n={...prev};delete n[nome];return n;}
+      return{...prev,[nome]:v};
+    });
+  }
 
   async function salvar(){
     if(!cli.trim()){setErro("Informe o cliente.");return;}
     if(!sel.length){setErro("Selecione ao menos 1 produto.");return;}
-    for(const p of sel){if(p.livre&&!(parseFloat(precoL[p.nome])>0)){setErro("Informe o valor de Diversos.");return;}}
-    for(const p of sel){if(!p.livre){const d=(est[p.nome]||0)-(comp[p.nome]||0);if(d<(itens[p.nome]||0)){setErro("Sem estoque: "+p.nome+" (disp: "+Math.max(0,d)+")");return;}}}
-    setErro("");setStBtn("salvando");
-    const desc=sel.map(p=>{if(p.livre)return itens[p.nome]+"x "+(descL[p.nome]||"Diversos")+" (R$"+precoL[p.nome]+")";return itens[p.nome]+"x "+p.nome;}).join(", ");
+    for(const p of sel){
+      if(p.livre&&!(parseFloat(precoL[p.nome])>0)){setErro("Informe o valor de Diversos.");return;}
+    }
+    setErro(""); setStBtn("salvando");
+    const desc=sel.map(p=>{
+      if(p.livre) return itens[p.nome]+"x "+(descL[p.nome]||"Diversos")+" (R$"+precoL[p.nome]+")";
+      return itens[p.nome]+"x "+p.nome;
+    }).join(", ");
     const novo={id:Date.now(),cliente:cli.trim(),contato:con.trim(),itens:desc,valor:total,pgto,data,obs:obs.trim(),status:"pendente",criadoEm:hoje()};
     setPed(ps=>[novo,...ps]);
     const ok=await crm({acao:"novo",...novo,id:novo.id.toString(),valor:novo.valor.toString()});
-    setStBtn(ok?"ok":"erro_crm");setTimeout(()=>setStBtn("idle"),3000);
+    setStBtn(ok?"ok":"erro_crm"); setTimeout(()=>setStBtn("idle"),3000);
     setCli("");setCon("");setItens({});setPrecoL({});setDescL({});setPgto("");setData("");setObs("");
   }
 
   async function togEnt(id){
-    const p=pedidos.find(x=>x.id===id);if(!p)return;
+    const p=pedidos.find(x=>x.id===id); if(!p) return;
     const ns=p.status==="entregue"?"pendente":"entregue";
     setPed(ps=>ps.map(x=>x.id===id?{...x,status:ns}:x));
     await crm({acao:"status",id:id.toString(),status:ns});
   }
   async function del(id){
-    if(!confirm("Excluir este pedido?"))return;
+    if(!confirm("Excluir este pedido?")) return;
     setPed(ps=>ps.filter(p=>p.id!==id));
     await crm({acao:"excluir",id:id.toString()});
   }
 
   let lista=pedidos.filter(p=>fSt==="todos"||p.status===fSt);
-  if(fOrd==="data")lista=[...lista].sort((a,b)=>(a.data||"9999")>(b.data||"9999")?1:-1);
-  else if(fOrd==="recente")lista=[...lista].sort((a,b)=>b.id-a.id);
+  if(fOrd==="data")    lista=[...lista].sort((a,b)=>(a.data||"9999")>(b.data||"9999")?1:-1);
+  else if(fOrd==="recente") lista=[...lista].sort((a,b)=>b.id-a.id);
   else lista=[...lista].sort((a,b)=>b.valor-a.valor);
 
   const pend=pedidos.filter(p=>p.status==="pendente");
@@ -109,21 +158,22 @@ export default function App(){
       t+="Subtotal: "+fmtV(tot)+"\n";
     });
     t+="-----------------\nTotal a receber: "+fmtV(prev);
-    setExpTxt(t);setExpOpen(true);
+    setExpTxt(t); setExpOpen(true);
   }
 
-  function corD(nome){const d=(est[nome]||0)-(comp[nome]||0);return d<=0?C.rd:d<=3?C.am:C.gn;}
   const bCor=stBtn==="ok"?"#1a6e1a":stBtn==="erro_crm"?"#7a4800":stBtn==="salvando"?"#333":C.rd;
   const bTxt=stBtn==="salvando"?"Salvando...":stBtn==="ok"?"Salvo no app e CRM!":stBtn==="erro_crm"?"Salvo (CRM offline)":"Salvar pedido";
 
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.tx,fontFamily:"sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:80}}>
 
+      {/* HEADER */}
       <div style={{padding:"10px 16px 6px",borderBottom:"1px solid "+C.br,display:"flex",flexDirection:"column",alignItems:"center"}}>
         <img src={"data:image/png;base64,"+LOGO_B64} alt="PS" style={{height:80,objectFit:"contain"}}/>
         <div style={{fontSize:11,color:C.di,marginTop:2}}>Controle de pedidos</div>
       </div>
 
+      {/* TABS */}
       <div style={{display:"flex",background:C.bg,borderBottom:"1px solid "+C.br,position:"sticky",top:0,zIndex:10}}>
         {[["novo","➕","Novo"],["pedidos","📋","Pedidos"],["resumo","📊","Resumo"],["estoque","📦","Estoque"]].map(([id,ic,lb])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"10px 0",textAlign:"center",cursor:"pointer",background:"none",border:"none",borderBottom:tab===id?"2px solid "+C.rd:"2px solid transparent"}}>
@@ -133,48 +183,97 @@ export default function App(){
         ))}
       </div>
 
+      {/* ── NOVO ── */}
       {tab==="novo"&&(
         <div style={{padding:16}}>
           <div style={DIV}>Cliente</div>
-          <div style={{marginBottom:12}}><label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Nome / apelido</label><input style={inp} value={cli} onChange={e=>setCli(e.target.value)} placeholder="Ex: Joao da padaria"/></div>
-          <div style={{marginBottom:12}}><label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Contato (opcional)</label><input style={inp} value={con} onChange={e=>setCon(e.target.value)} placeholder="Zap, bairro..."/></div>
+          <div style={{marginBottom:12}}>
+            <label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Nome / apelido</label>
+            <input style={inp} value={cli} onChange={e=>setCli(e.target.value)} placeholder="Ex: Joao da padaria"/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Contato (opcional)</label>
+            <input style={inp} value={con} onChange={e=>setCon(e.target.value)} placeholder="Zap, bairro..."/>
+          </div>
+
           <div style={DIV}>Produtos</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:7,marginBottom:8}}>
+          <div style={{display:"flex",flexWrap:"wrap",gap:7,marginBottom:4}}>
             {PRODUTOS.map(p=>{
-              const disp=p.livre?99:Math.max(0,(est[p.nome]||0)-(comp[p.nome]||0));
-              const sem=!p.livre&&disp===0;
-              return(<span key={p.nome} onClick={()=>!sem&&togProd(p.nome)} style={{padding:"6px 11px",borderRadius:20,fontSize:12,cursor:sem?"not-allowed":"pointer",border:itens[p.nome]?"1px solid "+C.rd:"1px solid #2a2a2a",background:itens[p.nome]?p.livre?"#7a3800":C.rd:sem?"#0d0d0d":"#141414",color:itens[p.nome]?"#fff":sem?"#333":"#888",userSelect:"none"}}>
-                {p.nome}{p.livre?" *":""}
-                {!p.livre&&<span style={{fontSize:9,marginLeft:4,color:itens[p.nome]?"rgba(255,255,255,.6)":corD(p.nome)}}>{disp}</span>}
-              </span>);
+              const s=p.livre?null:saldo(p.nome);
+              const cores=p.livre?{bg:itens[p.nome]?"#7a3800":"#141414",txt:itens[p.nome]?"#fff":"#888",border:itens[p.nome]?"#7a3800":"#2a2a2a"}
+                :itens[p.nome]?{bg:C.rd,txt:"#fff",border:C.rd}:corChip(p.nome);
+              return(
+                <span key={p.nome} onClick={()=>togProd(p.nome)}
+                  style={{padding:"6px 11px",borderRadius:20,fontSize:12,cursor:"pointer",
+                    border:"1px solid "+cores.border,background:cores.bg,color:cores.txt,userSelect:"none"}}>
+                  {p.nome}{p.livre?" *":""}
+                  {!p.livre&&(
+                    <span style={{fontSize:9,marginLeft:4,
+                      color:itens[p.nome]?"rgba(255,255,255,.7)":s>3?C.gn:s>0?C.am:"#c06060"}}>
+                      {s>0?s:s===0?"produzir":"prod "+Math.abs(s)}
+                    </span>
+                  )}
+                </span>
+              );
             })}
           </div>
-          <div style={{fontSize:11,color:"#444",marginBottom:12}}>Numero = estoque disponivel. Cinza = sem estoque.</div>
-          {sel.length>0&&(<>
-            {sel.map(p=>{
-              const pu=p.livre?parseFloat(precoL[p.nome]||0):p.preco;
-              return(<div key={p.nome} style={{background:C.bg2,border:"1px solid "+(p.livre?"#7a3800":C.br),borderRadius:10,padding:"10px 12px",marginBottom:8}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:p.livre?8:0}}>
-                  <div style={{flex:1}}><div style={{fontSize:14,color:C.tx}}>{p.nome}</div>{!p.livre&&<div style={{fontSize:11,color:C.mu}}>{fmtV(p.preco)} cada</div>}</div>
-                  <div style={{fontSize:14,fontWeight:700,color:C.tx,marginRight:12}}>{fmtV(pu*(itens[p.nome]||0))}</div>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <button onClick={()=>adjQty(p.nome,-1)} style={{width:30,height:30,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:20,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>-</button>
-                    <span style={{fontSize:16,fontWeight:700,color:C.tx,minWidth:24,textAlign:"center"}}>{itens[p.nome]}</span>
-                    <button onClick={()=>adjQty(p.nome,+1)} style={{width:30,height:30,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:20,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+          <div style={{fontSize:11,color:"#444",marginBottom:12,marginTop:6}}>
+            🟢 disponivel · 🟡 ultimas unidades · 🔴 produzir (pedido anotado normalmente)
+          </div>
+
+          {sel.length>0&&(
+            <>
+              {sel.map(p=>{
+                const pu=p.livre?parseFloat(precoL[p.nome]||0):p.preco;
+                const s=p.livre?null:saldo(p.nome);
+                const precisaProduzir=!p.livre&&s!==null&&(s-(itens[p.nome]||0))<0;
+                return(
+                  <div key={p.nome} style={{background:C.bg2,border:"1px solid "+(precisaProduzir?"#3a1a1a":p.livre?"#7a3800":C.br),borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:p.livre?8:0}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:14,color:C.tx}}>{p.nome}</div>
+                        {!p.livre&&<div style={{fontSize:11,color:C.mu}}>{fmtV(p.preco)} cada</div>}
+                        {precisaProduzir&&<div style={{fontSize:11,color:"#c06060",marginTop:2}}>Produzir antes de entregar</div>}
+                      </div>
+                      <div style={{fontSize:14,fontWeight:700,color:C.tx,marginRight:12}}>{fmtV(pu*(itens[p.nome]||0))}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <button onClick={()=>adjQty(p.nome,-1)} style={{width:30,height:30,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:20,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>-</button>
+                        <span style={{fontSize:16,fontWeight:700,color:C.tx,minWidth:24,textAlign:"center"}}>{itens[p.nome]}</span>
+                        <button onClick={()=>adjQty(p.nome,+1)} style={{width:30,height:30,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:20,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                      </div>
+                    </div>
+                    {p.livre&&(
+                      <div style={{display:"flex",gap:8,marginTop:4}}>
+                        <input style={{...inp,flex:2,fontSize:13,padding:"7px 10px"}} placeholder="Descricao" value={descL[p.nome]||""} onChange={e=>setDescL(prev=>({...prev,[p.nome]:e.target.value}))}/>
+                        <input style={{...inp,flex:1,fontSize:13,padding:"7px 10px"}} type="number" placeholder="R$" inputMode="decimal" value={precoL[p.nome]||""} onChange={e=>setPrecoL(prev=>({...prev,[p.nome]:e.target.value}))}/>
+                      </div>
+                    )}
                   </div>
-                </div>
-                {p.livre&&<div style={{display:"flex",gap:8,marginTop:4}}><input style={{...inp,flex:2,fontSize:13,padding:"7px 10px"}} placeholder="Descricao" value={descL[p.nome]||""} onChange={e=>setDescL(prev=>({...prev,[p.nome]:e.target.value}))}/><input style={{...inp,flex:1,fontSize:13,padding:"7px 10px"}} type="number" placeholder="R$" inputMode="decimal" value={precoL[p.nome]||""} onChange={e=>setPrecoL(prev=>({...prev,[p.nome]:e.target.value}))}/></div>}
-              </div>);
-            })}
-            <div style={{background:C.bg2,border:"1px solid "+C.br,borderRadius:12,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span style={{fontSize:14,color:C.mu}}>Total do pedido</span>
-              <span style={{fontSize:24,fontWeight:700,color:C.rd}}>{fmtV(total)}</span>
-            </div>
-          </>)}
+                );
+              })}
+              <div style={{background:C.bg2,border:"1px solid "+C.br,borderRadius:12,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:14,color:C.mu}}>Total do pedido</span>
+                <span style={{fontSize:24,fontWeight:700,color:C.rd}}>{fmtV(total)}</span>
+              </div>
+            </>
+          )}
+
           <div style={DIV}>Pagamento e entrega</div>
-          <div style={{marginBottom:12}}><label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Forma de pagamento</label><select style={inp} value={pgto} onChange={e=>setPgto(e.target.value)}><option value="">Selecione...</option>{PGTO.map(p=><option key={p}>{p}</option>)}</select></div>
-          <div style={{marginBottom:12}}><label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Data de entrega</label><input style={inp} type="date" value={data} onChange={e=>setData(e.target.value)}/></div>
-          <div style={{marginBottom:12}}><label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Observacao (opcional)</label><input style={inp} value={obs} onChange={e=>setObs(e.target.value)} placeholder="Entregar na portaria..."/></div>
+          <div style={{marginBottom:12}}>
+            <label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Forma de pagamento</label>
+            <select style={inp} value={pgto} onChange={e=>setPgto(e.target.value)}>
+              <option value="">Selecione...</option>{PGTO.map(p=><option key={p}>{p}</option>)}
+            </select>
+          </div>
+          <div style={{marginBottom:12}}>
+            <label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Data de entrega</label>
+            <input style={inp} type="date" value={data} onChange={e=>setData(e.target.value)}/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <label style={{fontSize:12,color:C.di,display:"block",marginBottom:4}}>Observacao (opcional)</label>
+            <input style={inp} value={obs} onChange={e=>setObs(e.target.value)} placeholder="Entregar na portaria..."/>
+          </div>
+
           {erro&&<div style={{color:C.rd,fontSize:13,marginTop:4,textAlign:"center"}}>{erro}</div>}
           <button onClick={salvar} disabled={stBtn==="salvando"} style={{width:"100%",padding:13,background:bCor,color:"#fff",border:"none",borderRadius:12,fontSize:15,fontWeight:700,cursor:stBtn==="salvando"?"not-allowed":"pointer",marginTop:6}}>{bTxt}</button>
           {stBtn==="ok"&&<div style={{textAlign:"center",fontSize:12,color:C.gn,marginTop:6}}>Registrado na planilha Google</div>}
@@ -182,37 +281,59 @@ export default function App(){
         </div>
       )}
 
+      {/* ── PEDIDOS ── */}
       {tab==="pedidos"&&(
         <div style={{padding:16}}>
           <div style={{display:"flex",gap:8,marginBottom:14}}>
-            <select style={{...inp,padding:"8px 10px",fontSize:13}} value={fSt} onChange={e=>setFSt(e.target.value)}><option value="todos">Todos</option><option value="pendente">Pendentes</option><option value="entregue">Entregues</option></select>
-            <select style={{...inp,padding:"8px 10px",fontSize:13}} value={fOrd} onChange={e=>setFOrd(e.target.value)}><option value="data">Por entrega</option><option value="recente">Mais recentes</option><option value="valor">Maior valor</option></select>
+            <select style={{...inp,padding:"8px 10px",fontSize:13}} value={fSt} onChange={e=>setFSt(e.target.value)}>
+              <option value="todos">Todos</option><option value="pendente">Pendentes</option><option value="entregue">Entregues</option>
+            </select>
+            <select style={{...inp,padding:"8px 10px",fontSize:13}} value={fOrd} onChange={e=>setFOrd(e.target.value)}>
+              <option value="data">Por entrega</option><option value="recente">Mais recentes</option><option value="valor">Maior valor</option>
+            </select>
           </div>
           {lista.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:"#444",fontSize:14}}>Nenhum pedido encontrado.</div>}
           {lista.map(p=>{
             const dr=diasR(p.data);let at="",aTipo="";
-            if(p.status==="pendente"&&dr!==null){if(dr<0){at="Atrasado "+Math.abs(dr)+"d";aTipo="atraso";}else if(dr===0){at="Hoje!";aTipo="hoje";}else if(dr===1){at="Amanha";}}
-            return(<div key={p.id} style={{background:C.bg2,border:"1px solid "+C.br,borderRadius:14,padding:"14px 15px",marginBottom:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                <div><div style={{fontSize:16,fontWeight:700}}>{p.cliente}</div>{p.contato&&<div style={{fontSize:12,color:C.di}}>{p.contato}</div>}</div>
-                <span style={{fontSize:11,padding:"3px 10px",borderRadius:20,fontWeight:600,background:p.status==="entregue"?C.gnB:C.rdB,color:p.status==="entregue"?C.gn:C.rd}}>{p.status==="entregue"?"Entregue":"Pendente"}</span>
+            if(p.status==="pendente"&&dr!==null){
+              if(dr<0){at="Atrasado "+Math.abs(dr)+"d";aTipo="atraso";}
+              else if(dr===0){at="Hoje!";aTipo="hoje";}
+              else if(dr===1){at="Amanha";}
+            }
+            return(
+              <div key={p.id} style={{background:C.bg2,border:"1px solid "+C.br,borderRadius:14,padding:"14px 15px",marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:16,fontWeight:700}}>{p.cliente}</div>
+                    {p.contato&&<div style={{fontSize:12,color:C.di}}>{p.contato}</div>}
+                  </div>
+                  <span style={{fontSize:11,padding:"3px 10px",borderRadius:20,fontWeight:600,background:p.status==="entregue"?C.gnB:C.rdB,color:p.status==="entregue"?C.gn:C.rd}}>
+                    {p.status==="entregue"?"Entregue":"Pendente"}
+                  </span>
+                </div>
+                <div style={{fontSize:13,color:C.mu,margin:"6px 0",lineHeight:1.6}}>{p.itens}</div>
+                {p.obs&&<div style={{fontSize:12,background:C.bg3,color:C.mu,padding:"4px 10px",borderRadius:20,display:"inline-block",marginTop:6}}>{p.obs}</div>}
+                {at&&<div style={{fontSize:12,marginTop:6,color:aTipo==="atraso"?C.rd:C.am}}>{at}</div>}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+                  <span style={{fontSize:16,fontWeight:700}}>{fmtV(p.valor)}</span>
+                  <div style={{textAlign:"right"}}>
+                    {p.pgto&&<div style={{fontSize:12,color:C.di}}>{p.pgto}</div>}
+                    <div style={{fontSize:12,color:C.di}}>{fmtData(p.data)}</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:12,paddingTop:12,borderTop:"1px solid #1a1a1a"}}>
+                  <button onClick={()=>togEnt(p.id)} style={{flex:1,padding:8,fontSize:13,borderRadius:10,cursor:"pointer",fontWeight:600,background:p.status==="entregue"?C.bg3:C.gnB,color:p.status==="entregue"?"#aaa":C.gn,border:p.status==="entregue"?"1px solid #222":"1px solid #1e4a1e"}}>
+                    {p.status==="entregue"?"Reverter":"Entregue"}
+                  </button>
+                  <button onClick={()=>del(p.id)} style={{flex:1,padding:8,fontSize:13,borderRadius:10,cursor:"pointer",fontWeight:600,background:C.rdB,color:C.rd,border:"1px solid #4a1e1e"}}>Excluir</button>
+                </div>
               </div>
-              <div style={{fontSize:13,color:C.mu,margin:"6px 0",lineHeight:1.6}}>{p.itens}</div>
-              {p.obs&&<div style={{fontSize:12,background:C.bg3,color:C.mu,padding:"4px 10px",borderRadius:20,display:"inline-block",marginTop:6}}>{p.obs}</div>}
-              {at&&<div style={{fontSize:12,marginTop:6,color:aTipo==="atraso"?C.rd:C.am}}>{at}</div>}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
-                <span style={{fontSize:16,fontWeight:700}}>{fmtV(p.valor)}</span>
-                <div style={{textAlign:"right"}}>{p.pgto&&<div style={{fontSize:12,color:C.di}}>{p.pgto}</div>}<div style={{fontSize:12,color:C.di}}>{fmtData(p.data)}</div></div>
-              </div>
-              <div style={{display:"flex",gap:8,marginTop:12,paddingTop:12,borderTop:"1px solid #1a1a1a"}}>
-                <button onClick={()=>togEnt(p.id)} style={{flex:1,padding:8,fontSize:13,borderRadius:10,cursor:"pointer",fontWeight:600,background:p.status==="entregue"?C.bg3:C.gnB,color:p.status==="entregue"?"#aaa":C.gn,border:p.status==="entregue"?"1px solid #222":"1px solid #1e4a1e"}}>{p.status==="entregue"?"Reverter":"Entregue"}</button>
-                <button onClick={()=>del(p.id)} style={{flex:1,padding:8,fontSize:13,borderRadius:10,cursor:"pointer",fontWeight:600,background:C.rdB,color:C.rd,border:"1px solid #4a1e1e"}}>Excluir</button>
-              </div>
-            </div>);
+            );
           })}
         </div>
       )}
 
+      {/* ── RESUMO ── */}
       {tab==="resumo"&&(
         <div style={{padding:16}}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
@@ -231,55 +352,75 @@ export default function App(){
             const dr=d==="sem-data"?null:diasR(d);
             const cor=dr===null?C.di:dr<0?C.rd:dr<=1?C.am:"#aaa";
             const suf=dr===null?"":dr<0?" - "+Math.abs(dr)+"d atraso":dr===0?" - HOJE":dr===1?" - amanha":"";
-            return(<div key={d} style={{marginBottom:16}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                <span style={{fontSize:14,fontWeight:700,color:cor}}>{d==="sem-data"?"Sem data":fmtData(d)}{suf}</span>
-                <span style={{fontSize:13,color:C.di}}>{ps.length}x - {fmtV(tot)}</span>
+            return(
+              <div key={d} style={{marginBottom:16}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                  <span style={{fontSize:14,fontWeight:700,color:cor}}>{d==="sem-data"?"Sem data":fmtData(d)}{suf}</span>
+                  <span style={{fontSize:13,color:C.di}}>{ps.length}x - {fmtV(tot)}</span>
+                </div>
+                {ps.map(p=><div key={p.id} style={{fontSize:13,color:"#666",padding:"4px 0",borderBottom:"1px solid #141414"}}>{p.cliente} - {p.itens.split(",")[0]}{p.itens.includes(",")?" ...":""}</div>)}
               </div>
-              {ps.map(p=><div key={p.id} style={{fontSize:13,color:"#666",padding:"4px 0",borderBottom:"1px solid #141414"}}>{p.cliente} - {p.itens.split(",")[0]}{p.itens.includes(",")?" ...":""}</div>)}
-            </div>);
+            );
           })}
           <div style={DIV}>Exportar para WhatsApp</div>
-          <button onClick={gerarExp} style={{width:"100%",padding:11,background:C.bg3,color:"#aaa",border:"1px solid #222",borderRadius:12,fontSize:14,fontWeight:500,cursor:"pointer"}}>Gerar resumo para copiar</button>
-          {expOpen&&(<div style={{background:C.bg2,border:"1px solid "+C.br,borderRadius:12,padding:14,marginTop:8}}>
-            <div style={{fontSize:12,color:C.mu,whiteSpace:"pre-wrap",fontFamily:"monospace",marginBottom:10,lineHeight:1.7}}>{expTxt}</div>
-            <button onClick={()=>{navigator.clipboard.writeText(expTxt).then(()=>{setCop(true);setTimeout(()=>setCop(false),2000)});}} style={{width:"100%",padding:13,background:cop?"#1a6e1a":C.rd,color:"#fff",border:"none",borderRadius:12,fontSize:15,fontWeight:700,cursor:"pointer"}}>{cop?"Copiado!":"Copiar texto"}</button>
-          </div>)}
+          <button onClick={gerarExp} style={{width:"100%",padding:11,background:C.bg3,color:"#aaa",border:"1px solid #222",borderRadius:12,fontSize:14,fontWeight:500,cursor:"pointer"}}>
+            Gerar resumo para copiar
+          </button>
+          {expOpen&&(
+            <div style={{background:C.bg2,border:"1px solid "+C.br,borderRadius:12,padding:14,marginTop:8}}>
+              <div style={{fontSize:12,color:C.mu,whiteSpace:"pre-wrap",fontFamily:"monospace",marginBottom:10,lineHeight:1.7}}>{expTxt}</div>
+              <button onClick={()=>{navigator.clipboard.writeText(expTxt).then(()=>{setCop(true);setTimeout(()=>setCop(false),2000)});}} style={{width:"100%",padding:13,background:cop?"#1a6e1a":C.rd,color:"#fff",border:"none",borderRadius:12,fontSize:15,fontWeight:700,cursor:"pointer"}}>
+                {cop?"Copiado!":"Copiar texto"}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
+      {/* ── ESTOQUE ── */}
       {tab==="estoque"&&(
         <div style={{padding:16}}>
-          <div style={{background:C.bg2,border:"1px solid "+C.br,borderRadius:12,padding:"12px 16px",marginBottom:16,fontSize:13,color:C.mu,lineHeight:1.6}}>
-            Ajuste o total que voce tem. O app desconta os pedidos pendentes e mostra o disponivel real.
+          <div style={{background:C.bg2,border:"1px solid "+C.br,borderRadius:12,padding:"12px 16px",marginBottom:16,fontSize:13,color:C.mu,lineHeight:1.7}}>
+            Informe o que voce tem em maos. O app calcula automaticamente o que ainda precisa ser produzido para cobrir os pedidos pendentes.
           </div>
+
+          {/* Painel de producao */}
+          {PRODUTOS.filter(p=>!p.livre&&saldo(p.nome)<0).length>0&&(
+            <>
+              <div style={DIV}>Producao necessaria</div>
+              {PRODUTOS.filter(p=>!p.livre&&saldo(p.nome)<0).map(p=>(
+                <div key={p.nome} style={{background:C.rdB,border:"1px solid #4a1e1e",borderRadius:10,padding:"10px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:14,color:C.tx,fontWeight:600}}>{p.nome}</span>
+                  <span style={{fontSize:16,fontWeight:700,color:C.rd}}>produzir {Math.abs(saldo(p.nome))} un.</span>
+                </div>
+              ))}
+            </>
+          )}
+
+          <div style={DIV}>Estoque em maos</div>
           {PRODUTOS.filter(p=>!p.livre).map(p=>{
-            const te=est[p.nome]||0;const c=comp[p.nome]||0;const d=Math.max(0,te-c);
-            const cor=d===0?C.rd:d<=3?C.am:C.gn;
-            return(<div key={p.nome} style={{display:"flex",alignItems:"center",background:C.bg2,border:"1px solid "+C.br,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:600,color:C.tx}}>{p.nome}</div>
-                <div style={{fontSize:12,marginTop:2}}>
-                  <span style={{color:cor,fontWeight:600}}>{d} disponivel</span>
-                  {c>0&&<span style={{color:C.di}}> - {c} pedido(s) pendente(s)</span>}
+            const te=est[p.nome]||0;
+            const c=comp[p.nome]||0;
+            const s=saldo(p.nome);
+            const cor=s<0?C.rd:s===0?C.am:s<=3?C.am:C.gn;
+            return(
+              <div key={p.nome} style={{display:"flex",alignItems:"center",background:C.bg2,border:"1px solid "+C.br,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:600,color:C.tx}}>{p.nome}</div>
+                  <div style={{fontSize:12,marginTop:3,display:"flex",gap:10,flexWrap:"wrap"}}>
+                    <span style={{color:C.di}}>Em maos: <b style={{color:C.tx}}>{te}</b></span>
+                    {c>0&&<span style={{color:C.di}}>Pedidos: <b style={{color:C.am}}>{c}</b></span>}
+                    <span style={{color:cor,fontWeight:700}}>{s<0?"Produzir: "+Math.abs(s):s===0?"Zerado":"Livre: "+s}</span>
+                  </div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:8}}>
+                  <button onClick={()=>setEst(prev=>({...prev,[p.nome]:Math.max(0,(prev[p.nome]||0)-1)}))} style={{width:34,height:34,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:22,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>-</button>
+                  <span style={{fontSize:20,fontWeight:700,color:C.tx,minWidth:34,textAlign:"center"}}>{te}</span>
+                  <button onClick={()=>setEst(prev=>({...prev,[p.nome]:(prev[p.nome]||0)+1}))} style={{width:34,height:34,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:22,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
                 </div>
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <button onClick={()=>setEst(prev=>({...prev,[p.nome]:Math.max(0,(prev[p.nome]||0)-1)}))} style={{width:34,height:34,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:22,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>-</button>
-                <span style={{fontSize:20,fontWeight:700,color:C.tx,minWidth:34,textAlign:"center"}}>{te}</span>
-                <button onClick={()=>setEst(prev=>({...prev,[p.nome]:(prev[p.nome]||0)+1}))} style={{width:34,height:34,borderRadius:8,background:C.bg3,border:"1px solid #333",color:C.tx,fontSize:22,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-              </div>
-            </div>);
+            );
           })}
-          <div style={DIV}>Alertas</div>
-          {PRODUTOS.filter(p=>!p.livre&&Math.max(0,(est[p.nome]||0)-(comp[p.nome]||0))<=3).length>0
-            ?PRODUTOS.filter(p=>!p.livre&&Math.max(0,(est[p.nome]||0)-(comp[p.nome]||0))<=3).map(p=>{
-              const d=Math.max(0,(est[p.nome]||0)-(comp[p.nome]||0));
-              return<div key={p.nome} style={{background:d===0?C.rdB:C.amB,border:"1px solid "+(d===0?"#4a1e1e":"#4a3800"),borderRadius:10,padding:"10px 14px",marginBottom:8,display:"flex",justifyContent:"space-between"}}>
-                <span style={{fontSize:13,color:d===0?C.rd:C.am}}>{d===0?"Sem estoque:":"Ultimas unidades:"} {p.nome}</span>
-                <span style={{fontSize:13,fontWeight:700,color:d===0?C.rd:C.am}}>{d} un.</span>
-              </div>;})
-            :<div style={{textAlign:"center",padding:"16px",color:"#444",fontSize:14}}>Estoque OK em todos os produtos</div>}
         </div>
       )}
     </div>
